@@ -50,9 +50,27 @@ The output is grouped by `owned_by` and looks like:
 
 Copy the result into your opencode config (e.g. `opencode.json`) under `provider`.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/vf1/opencode-custom-provider/main/install.sh | sh
+```
+
+Adds/updates `models` in `~/.config/opencode/opencode.json`. Deps: `curl` +
+POSIX `sh`/`awk`. The rest of the provider block (`npm`, `options.baseURL`,
+`apiKey`) is yours to configure — a hint is printed if the block is missing.
+If your config key differs from `command-code`, pass it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/vf1/opencode-custom-provider/main/install.sh | sh -s -- commandcode
+```
+
+`--config PATH` targets another config, `OCC_URL` overrides the download URL.
+A backup is saved to `<config>.bak` before the first change.
+
 ## Download
 
-Always up-to-date `commandcode.json`:
+Raw `commandcode.json` for manual use:
 
 ```text
 https://github.com/vf1/opencode-custom-provider/releases/download/files/commandcode.json
