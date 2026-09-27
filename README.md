@@ -50,12 +50,13 @@ The output is grouped by `owned_by` and looks like:
 
 Copy the result into your opencode config (e.g. `opencode.json`) under `provider`.
 
-## GitHub Action
+## Download
 
-The `Generate provider config` workflow runs manually (workflow_dispatch, no
-inputs): it executes `./commandcode.sh` and uploads `results/commandcode.json`
-as the `commandcode` artifact. Generated files are gitignored; nothing is
-committed.
+Always up-to-date `commandcode.json`:
+
+```text
+https://github.com/vf1/opencode-custom-provider/releases/download/files/commandcode.json
+```
 
 ## Notes
 

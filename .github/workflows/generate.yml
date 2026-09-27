@@ -1,7 +1,10 @@
-name: Generate provider config
+name: Generate provider configs
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   generate:
@@ -9,11 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate config
-        run: ./commandcode.sh
+      - name: Generate configs
+        run: |
+          for script in ./*.sh; do
+            "$script"
+          done
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: commandcode
-          path: results/commandcode.json
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view files >/dev/null 2>&1 \
+            || gh release create files --title "Provider configs" --notes "Generated opencode provider configs"
+          gh release upload files results/*.json --clobber
