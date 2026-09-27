@@ -2,13 +2,14 @@
 # opencode-custom-provider installer.
 #
 # Downloads the generated provider config from the release and adds/updates
-# the "models" section of a provider in an opencode config. Everything else in
-# the provider block (npm, name, options, apiKey) is left to the user.
+# the "command-code" provider in an opencode config. If the provider is
+# missing it is created as a full working block (npm, name, options.baseURL,
+# models); if it exists, only "models" is replaced and the rest of the block
+# (npm, name, options, apiKey) is left untouched.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/vf1/opencode-custom-provider/main/install.sh | sh
-#   curl -fsSL ... | sh -s -- <provider-key>
-#   curl -fsSL ... | sh -s -- --config /path/to/opencode.json <provider-key>
+#   curl -fsSL ... | sh -s -- --config /path/to/opencode.json
 #
 # Options:
 #   --config PATH   target config (default: ~/.config/opencode/opencode.json)
@@ -16,27 +17,21 @@
 # Env:
 #   OCC_URL         download URL override (default: the commandcode.json
 #                   release asset)
-#
-# The optional provider-key is the key to write into in the config. Without it
-# the key(s) from the downloaded JSON are used (command-code). So if your
-# config key differs (e.g. "commandcode"), pass it: sh -s -- commandcode
 
 set -eu
 
 URL="${OCC_URL:-https://github.com/vf1/opencode-custom-provider/releases/download/files/commandcode.json}"
 CONFIG=""
-KEY=""
 
 usage() {
   printf '%s\n' \
-    "usage: install.sh [--config PATH] [provider-key]" \
+    "usage: install.sh [--config PATH]" \
     "" \
     "  Downloads models from the opencode-custom-provider release and" \
-    "  adds/updates provider.<key>.models in an opencode config." \
+    "  adds/updates provider.\"command-code\" in an opencode config." \
+    "  If the provider is missing, a full block (npm, name, options," \
+    "  models) is created; otherwise only \"models\" is updated." \
     "  Default config: ~/.config/opencode/opencode.json" \
-    "  provider-key: config key to write into (default: the key(s) from" \
-    "  the downloaded JSON, e.g. command-code). If your config key is" \
-    "  different (e.g. commandcode), pass it." \
     "  Env OCC_URL overrides the download URL."
 }
 
@@ -64,12 +59,9 @@ while [ $# -gt 0 ]; do
       exit 1
       ;;
     *)
-      if [ -n "$KEY" ]; then
-        echo "install.sh: only one provider key expected" >&2
-        exit 1
-      fi
-      KEY="$1"
-      shift
+      echo "install.sh: unexpected argument: $1" >&2
+      usage >&2
+      exit 1
       ;;
   esac
 done
@@ -81,13 +73,6 @@ if [ -z "$CONFIG" ]; then
   fi
   CONFIG="${HOME}/.config/opencode/opencode.json"
 fi
-
-case "$KEY" in
-  *[\"\\]*)
-    echo "install.sh: invalid provider key: $KEY" >&2
-    exit 1
-    ;;
-esac
 
 command -v curl >/dev/null 2>&1 || { echo "install.sh: curl is required" >&2; exit 1; }
 command -v awk >/dev/null 2>&1 || { echo "install.sh: awk is required" >&2; exit 1; }
@@ -204,7 +189,7 @@ function findkey(s, i, key,   c, k, ke, p, q) {
     p = skipws(s, p + 1)
     q = skipval(s, p)
     if (q == 0) return 0
-    if (k == key) { FVS = p; FVE = q; return 1 }
+    if (k == key) { FVS = p; FVE = q; FKEY = i; return 1 }
     i = q
   }
   return 0
@@ -232,33 +217,85 @@ function countkeys(s, i,   c, ke, p, q, n) {
   }
   return -1
 }
-function listkeys(s, i,   c, k, ke, p, q) {
-  i = skipws(s, i)
-  if (substr(s, i, 1) != "{") return 0
-  i++
-  while (i <= length(s)) {
-    i = skipws(s, i)
-    c = substr(s, i, 1)
-    if (c == "}") return 1
-    if (c == ",") { i++; continue }
-    if (c != "\"") return 0
-    ke = skipstr(s, i)
-    if (ke == 0) return 0
-    k = substr(s, i + 1, ke - i - 2)
-    p = skipws(s, ke)
-    if (substr(s, p, 1) != ":") return 0
-    p = skipws(s, p + 1)
-    q = skipval(s, p)
-    if (q == 0) return 0
-    print k
-    i = q
-  }
-  return 0
+function pad(n,   out) {
+  out = ""
+  while (n > 0) { out = out " "; n-- }
+  return out
 }
-function insert_add(s, opos, ins,   cpos) {
+function indof(s, pos,   i, n) {
+  i = pos
+  while (i > 1 && substr(s, i - 1, 1) != "\n") i--
+  n = 0
+  while (substr(s, i + n, 1) == " ") n++
+  return n
+}
+function fmt(s, i, j, ci,   c, out, p, q, k, first, end) {
+  i = skipws(s, i)
+  c = substr(s, i, 1)
+  end = skipval(s, i) - 1
+  if (c == "{") {
+    p = skipws(s, i + 1)
+    if (substr(s, p, 1) == "}") return "{}"
+    out = "{"
+    first = 1
+    while (p < end) {
+      p = skipws(s, p)
+      if (substr(s, p, 1) == "}") break
+      if (substr(s, p, 1) == ",") { p = skipws(s, p + 1); continue }
+      q = skipstr(s, p)
+      k = substr(s, p, q - p)
+      p = skipws(s, q)
+      p = skipws(s, p + 1)
+      q = skipval(s, p)
+      out = out (first ? "" : ",") "\n" pad(ci) k ": " fmt(s, p, q, ci + 2)
+      first = 0
+      p = q
+    }
+    return out "\n" pad(ci - 2) "}"
+  }
+  if (c == "[") {
+    p = skipws(s, i + 1)
+    if (substr(s, p, 1) == "]") return "[]"
+    out = "["
+    first = 1
+    while (p < end) {
+      p = skipws(s, p)
+      if (substr(s, p, 1) == "]") break
+      if (substr(s, p, 1) == ",") { p = skipws(s, p + 1); continue }
+      q = skipval(s, p)
+      out = out (first ? "" : ",") "\n" pad(ci) fmt(s, p, q, ci + 2)
+      first = 0
+      p = q
+    }
+    return out "\n" pad(ci - 2) "]"
+  }
+  return substr(s, i, j - i)
+}
+function cmdblock(ci,   out) {
+  out = pad(ci) "\"command-code\": {\n"
+  out = out pad(ci + 2) "\"npm\": \"@ai-sdk/openai-compatible\",\n"
+  out = out pad(ci + 2) "\"name\": \"command-code\",\n"
+  out = out pad(ci + 2) "\"options\": {\n"
+  out = out pad(ci + 4) "\"baseURL\": \"https://api.commandcode.ai/provider/v1\"\n"
+  out = out pad(ci + 2) "},\n"
+  out = out pad(ci + 2) "\"models\": " fmt(models, 1, length(models) + 1, ci + 4)
+  out = out "\n" pad(ci) "}"
+  return out
+}
+function memind(s, opos,   p) {
+  p = skipws(s, opos + 1)
+  if (substr(s, p, 1) == "}") return indof(s, opos) + 2
+  return indof(s, p)
+}
+function insert_add(s, opos, ins,   cpos, w, closei) {
   cpos = skipval(s, opos) - 1
-  if (emptyobj(s, opos)) return substr(s, 1, cpos - 1) ins substr(s, cpos)
-  return substr(s, 1, cpos - 1) "," ins substr(s, cpos)
+  closei = indof(s, cpos)
+  if (emptyobj(s, opos)) {
+    return substr(s, 1, opos) "\n" ins "\n" pad(closei) substr(s, cpos)
+  }
+  w = cpos
+  while (w > 1 && substr(s, w - 1, 1) ~ /[ \t\r\n]/) w--
+  return substr(s, 1, w - 1) ",\n" ins "\n" pad(closei) substr(s, cpos)
 }
 function readfile(f,   line, s) {
   s = ""
@@ -272,19 +309,8 @@ BEGIN {
     print "install.sh: downloaded file is not valid JSON" > "/dev/stderr"
     exit 1
   }
-  if (MODE == "listkeys") {
-    if (!findkey(s, 1, "provider")) {
-      print "install.sh: no provider section in downloaded file" > "/dev/stderr"
-      exit 1
-    }
-    if (!listkeys(s, FVS)) {
-      print "install.sh: cannot parse provider section in downloaded file" > "/dev/stderr"
-      exit 1
-    }
-    exit 0
-  }
-  if (!findkey(s, 1, "provider") || !findkey(s, FVS, SRC) || !findkey(s, FVS, "models")) {
-    print "install.sh: provider \"" SRC "\" not found in downloaded file" > "/dev/stderr"
+  if (!findkey(s, 1, "provider") || !findkey(s, FVS, "command-code") || !findkey(s, FVS, "models")) {
+    print "install.sh: provider \"command-code\" not found in downloaded file" > "/dev/stderr"
     exit 1
   }
   models = substr(s, FVS, FVE - FVS)
@@ -304,17 +330,20 @@ BEGIN {
     exit 1
   }
   if (!findkey(cfg, 1, "provider")) {
-    out = insert_add(cfg, root, "\"provider\":{\"" DST "\":{\"models\":" models "}}")
+    ri = memind(cfg, root)
+    ins = pad(ri) "\"provider\": {\n" cmdblock(ri + 2) "\n" pad(ri) "}"
+    out = insert_add(cfg, root, ins)
     status = "created " n
-  } else if (!findkey(cfg, FVS, DST)) {
-    out = insert_add(cfg, FVS, "\"" DST "\":{\"models\":" models "}")
+  } else if (!findkey(cfg, FVS, "command-code")) {
+    out = insert_add(cfg, FVS, cmdblock(memind(cfg, FVS)))
     status = "created " n
   } else {
     pobj = FVS
     if (findkey(cfg, pobj, "models")) {
-      out = substr(cfg, 1, FVS - 1) models substr(cfg, FVE)
+      out = substr(cfg, 1, FVS - 1) fmt(models, 1, length(models) + 1, indof(cfg, FKEY) + 2) substr(cfg, FVE)
     } else {
-      out = insert_add(cfg, pobj, "\"models\":" models)
+      ci = memind(cfg, pobj)
+      out = insert_add(cfg, pobj, pad(ci) "\"models\": " fmt(models, 1, length(models) + 1, ci + 2))
     }
     status = "updated " n
   }
@@ -324,78 +353,34 @@ BEGIN {
 }
 '
 
-newkeys=$(awk -v MODE=listkeys -v NEWF="$NEW" "$PROG")
-if [ -z "$newkeys" ]; then
-  echo "install.sh: no providers in downloaded file" >&2
-  exit 1
-fi
-
 made_config=0
 if [ ! -e "$CONFIG" ]; then
   mkdir -p "$(dirname "$CONFIG")"
-  printf '%s\n' '{"$schema":"https://opencode.ai/config.json","provider":{}}' > "$CONFIG"
+  printf '%s\n' \
+    '{' \
+    '  "$schema": "https://opencode.ai/config.json",' \
+    '  "provider": {}' \
+    '}' > "$CONFIG"
   made_config=1
   echo "install.sh: created $CONFIG"
 fi
 
-backed=0
-merge_one() {
-  src="$1"
-  dst="$2"
-  status=$(awk -v MODE=merge -v SRC="$src" -v DST="$dst" -v NEWF="$NEW" -v CFGF="$CONFIG" -v OUT="$OUT" "$PROG")
-  if cmp -s "$OUT" "$CONFIG"; then
-    rm -f "$OUT"
-    echo "provider $dst: unchanged"
-    return 0
-  fi
-  if [ "$backed" -eq 0 ] && [ "$made_config" -eq 0 ]; then
+status=$(awk -v NEWF="$NEW" -v CFGF="$CONFIG" -v OUT="$OUT" "$PROG")
+if cmp -s "$OUT" "$CONFIG"; then
+  rm -f "$OUT"
+  echo "provider command-code: unchanged"
+  echo "config: $CONFIG (no changes)"
+else
+  if [ "$made_config" -eq 0 ]; then
     cp "$CONFIG" "$CONFIG.bak"
-    backed=1
   fi
   mv "$OUT" "$CONFIG"
   action=${status%% *}
   n=${status#* }
-  echo "provider $dst: $action ($n models)"
-  if [ "$action" = "created" ]; then
-    printf '%s\n' \
-      "note: provider \"$dst\" now contains \"models\" only - add the rest yourself:" \
-      "      \"npm\": \"@ai-sdk/openai-compatible\"," \
-      "      \"options\": { \"baseURL\": \"https://api.example.com/v1\", \"apiKey\": \"...\" }"
-  fi
-}
-
-if [ -n "$KEY" ]; then
-  found=0
-  for k in $newkeys; do
-    if [ "$k" = "$KEY" ]; then
-      found=1
-      break
-    fi
-  done
-  if [ "$found" -eq 1 ]; then
-    merge_one "$KEY" "$KEY"
+  echo "provider command-code: $action ($n models)"
+  if [ "$made_config" -eq 1 ]; then
+    echo "config: $CONFIG"
   else
-    nkeys=0
-    for k in $newkeys; do
-      nkeys=$((nkeys + 1))
-    done
-    if [ "$nkeys" -ne 1 ]; then
-      echo "install.sh: provider \"$KEY\" not in downloaded file, available:" >&2
-      printf '%s\n' "$newkeys" >&2
-      exit 1
-    fi
-    for k in $newkeys; do
-      merge_one "$k" "$KEY"
-    done
+    echo "config: $CONFIG (backup: $CONFIG.bak)"
   fi
-else
-  for k in $newkeys; do
-    merge_one "$k" "$k"
-  done
-fi
-
-if [ "$backed" -eq 1 ]; then
-  echo "config: $CONFIG (backup: $CONFIG.bak)"
-else
-  echo "config: $CONFIG (no changes)"
 fi
