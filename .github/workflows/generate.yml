@@ -1,0 +1,19 @@
+name: Generate provider config
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate config
+        run: ./commandcode.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commandcode
+          path: results/commandcode.json
